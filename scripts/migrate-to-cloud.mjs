@@ -16,7 +16,6 @@ import { pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 
 import { DEFAULT_LABEL_NAMES } from "../shared/domain.mjs";
-
 const SCHEMA_VERSION = 2;
 const WRANGLER_D1_STATEMENT_MAX_BYTES = 90_000;
 const PROJECT_README_D1_CHUNK_CHARACTERS = 10_000;
@@ -268,12 +267,23 @@ function assertCountsMatch(expected, actual) {
 }
 
 function validateBundle(bundle) {
-  if (!bundle || bundle.schemaVersion !== SCHEMA_VERSION) {
+  if (!bundle || ![1, SCHEMA_VERSION].includes(bundle.schemaVersion)) {
     throw new Error(`Unsupported cloud migration schema version '${bundle?.schemaVersion}'`);
   }
   for (const table of TABLE_ORDER) {
     if (!Array.isArray(bundle.tables?.[table])) {
       throw new Error(`Cloud migration bundle is missing table '${table}'`);
+    }
+  }
+  if (bundle.schemaVersion === 2) {
+    for (const project of bundle.tables.projects) {
+      if (!Object.hasOwn(project, "source") || !["global", "local", "feishu"].includes(project.source)) {
+        throw new Error(`Cloud migration project '${project.id}' has an invalid source`);
+      }
+      if (!Object.hasOwn(project, "archived_at")
+        || (project.archived_at !== null && typeof project.archived_at !== "string")) {
+        throw new Error(`Cloud migration project '${project.id}' has an invalid archived_at`);
+      }
     }
   }
   if (!Array.isArray(bundle.attachments)) {
@@ -331,6 +341,23 @@ function validateBundle(bundle) {
   }
 }
 
+function normalizeBundle(bundle) {
+  if (!bundle || ![1, SCHEMA_VERSION].includes(bundle.schemaVersion)) return bundle;
+  if (bundle.schemaVersion === SCHEMA_VERSION) return bundle;
+  return {
+    ...bundle,
+    schemaVersion: SCHEMA_VERSION,
+    tables: {
+      ...bundle.tables,
+      projects: (bundle.tables?.projects ?? []).map((project) => ({
+        ...project,
+        archived_at: project.archived_at ?? null,
+        source: project.id === "local" ? "global" : (project.source ?? "local"),
+      })),
+    },
+  };
+}
+
 export async function createCloudMigrationBundle({
   databasePath,
   attachmentsDirectory,
@@ -340,6 +367,8 @@ export async function createCloudMigrationBundle({
   tables.projects = projectRowsWithLabels(tables).map((project) => ({
     ...project,
     workspace_path: null,
+    archived_at: project.archived_at ?? null,
+    source: project.id === "local" ? "global" : (project.source ?? "local"),
   }));
   tables.tasks = tables.tasks.map((task) => ({
     ...task,
@@ -358,7 +387,8 @@ export async function createCloudMigrationBundle({
 
 const CLOUD_COLUMNS = {
   projects: [
-    "id", "name", "workspace_path", "labels", "next_task_number", "created_at", "updated_at",
+    "id", "name", "workspace_path", "labels", "source", "archived_at",
+    "next_task_number", "created_at", "updated_at",
   ],
   project_readmes: ["project_id", "content", "version", "created_at", "updated_at"],
   tasks: [
@@ -589,6 +619,7 @@ async function verifyR2Attachments(bundle, r2) {
 }
 
 export async function verifyCloudMigrationBundle(bundle, { d1, r2 }) {
+  bundle = normalizeBundle(bundle);
   validateBundle(bundle);
   const counts = await d1.countByProject();
   assertCountsMatch(bundle.counts.byProject, counts);
@@ -601,6 +632,7 @@ export async function verifyCloudMigrationBundle(bundle, { d1, r2 }) {
 }
 
 export async function importCloudMigrationBundle(bundle, { d1, r2 }) {
+  bundle = normalizeBundle(bundle);
   validateBundle(bundle);
 
   const existingCounts = await d1.countByProject();
@@ -744,7 +776,7 @@ export async function readCloudMigrationBundle(inputDirectory) {
     path.join(inputDirectory, "manifest.json"),
     "cloud migration manifest",
   );
-  if (manifest.schemaVersion !== SCHEMA_VERSION) {
+  if (![1, SCHEMA_VERSION].includes(manifest.schemaVersion)) {
     throw new Error(`Unsupported cloud migration schema version '${manifest.schemaVersion}'`);
   }
 
@@ -775,8 +807,9 @@ export async function readCloudMigrationBundle(inputDirectory) {
     tables,
     attachments,
   };
-  validateBundle(bundle);
-  return bundle;
+  const normalized = normalizeBundle(bundle);
+  validateBundle(normalized);
+  return normalized;
 }
 
 function parseOptions(args, allowed, required) {

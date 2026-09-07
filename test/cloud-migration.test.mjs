@@ -26,20 +26,28 @@ import {
   runCli,
   writeCloudMigrationBundle,
 } from "../scripts/migrate-to-cloud.mjs";
+import { codexInvocation } from "../shared/codex-invocation.mjs";
 import { createCloudWorkerHarness } from "./helpers/cloud-worker-harness.mjs";
 
 const fixtures = [];
 const timestamp = "2026-07-24T12:00:00.000Z";
 const execFile = promisify(execFileCallback);
 const projectRoot = path.resolve(import.meta.dirname, "..");
-const wranglerExecutable = path.join(
-  projectRoot,
-  "node_modules",
-  "wrangler",
-  "bin",
-  "wrangler.js",
-);
+const wranglerExecutable = process.platform === "win32"
+  ? path.join(projectRoot, "node_modules", "wrangler", "bin", "wrangler.js")
+  : path.join(projectRoot, "node_modules", ".bin", "wrangler");
 const wranglerConfig = path.join(projectRoot, "wrangler.jsonc");
+
+function assertPrivateMode(filename, expectedMode) {
+  return stat(filename).then((details) => {
+    // Windows does not expose POSIX permission bits through fs.stat(). The
+    // files are still stat'ed on every platform so the test catches missing
+    // or prematurely deleted transfer files there as well.
+    if (process.platform !== "win32") {
+      assert.equal(details.mode & 0o777, expectedMode);
+    }
+  });
+}
 
 afterEach(async () => {
   while (fixtures.length > 0) {
@@ -487,6 +495,8 @@ test("migration snapshots live WAL data, counts each project, and strips local e
     ["alpha", "beta"],
   );
   assert.equal(bundle.tables.projects.every((project) => project.workspace_path === null), true);
+  assert.equal(bundle.tables.projects.every((project) => project.archived_at === null), true);
+  assert.equal(bundle.tables.projects.every((project) => project.source === "local"), true);
 
   const alphaWorktreeTask = bundle.tables.tasks.find((task) => task.id === "task-a1");
   assert.equal(alphaWorktreeTask.worktree_path, null);
@@ -518,6 +528,25 @@ test("migration records attachment bytes, SHA-256, and actual size", async () =>
       createHash("sha256").update(expectedContents).digest("hex"),
     );
     assert.equal(path.isAbsolute(attachment.objectKey), false);
+  }
+});
+
+test("v2 migration bundles reject projects missing archive lifecycle fields", async () => {
+  const fixture = await createMigrationFixture();
+  const bundle = await createCloudMigrationBundle({
+    databasePath: fixture.databasePath,
+    attachmentsDirectory: fixture.attachmentsDirectory,
+  });
+  for (const field of ["source", "archived_at"]) {
+    const invalid = structuredClone(bundle);
+    delete invalid.tables.projects[0][field];
+    await assert.rejects(
+      () => importCloudMigrationBundle(invalid, {
+        d1: createD1Adapter(invalid),
+        r2: createR2Adapter(),
+      }),
+      new RegExp(`project.*${field}|${field}.*project`, "i"),
+    );
   }
 });
 
@@ -924,20 +953,13 @@ test("versioned bundle round-trips through private manifest, data, and attachmen
 
   await writeCloudMigrationBundle(bundle, outputDirectory);
 
-  if (process.platform !== "win32") {
-    assert.equal((await stat(outputDirectory)).mode & 0o777, 0o700);
-    assert.equal((await stat(path.join(outputDirectory, "data"))).mode & 0o777, 0o700);
-    assert.equal(
-      (await stat(path.join(outputDirectory, "attachments"))).mode & 0o777,
-      0o700,
-    );
-    assert.equal(
-      (await stat(path.join(outputDirectory, "manifest.json"))).mode & 0o777,
-      0o600,
-    );
-  }
+  await assertPrivateMode(outputDirectory, 0o700);
+  await assertPrivateMode(path.join(outputDirectory, "data"), 0o700);
+  await assertPrivateMode(path.join(outputDirectory, "attachments"), 0o700);
+  await assertPrivateMode(path.join(outputDirectory, "manifest.json"), 0o600);
 
   const restored = await readCloudMigrationBundle(outputDirectory);
+  assert.equal(restored.schemaVersion, 2);
   assert.deepEqual(restored.counts, bundle.counts);
   assert.equal(JSON.stringify(restored.tables), JSON.stringify(bundle.tables));
   assert.deepEqual(
@@ -1057,10 +1079,8 @@ test("Wrangler adapter requires remote opt-in and keeps transfer files private",
       assert.ok(!args.includes("--persist-to"));
     }
     for (const filename of transferFiles) {
-      if (process.platform !== "win32") {
-        assert.equal((await stat(filename)).mode & 0o777, 0o600);
-        assert.equal((await stat(path.dirname(filename))).mode & 0o777, 0o700);
-      }
+      await assertPrivateMode(filename, 0o600);
+      await assertPrivateMode(path.dirname(filename), 0o700);
     }
   } finally {
     await adapters.cleanup();
@@ -1115,7 +1135,7 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
   const adapterPath = path.join(projectRoot, "scripts", "wrangler-cloud-adapter.mjs");
 
   async function applyMigrations(persistTo) {
-    await execFile(process.execPath, [wranglerExecutable,
+    const args = [
       "d1",
       "migrations",
       "apply",
@@ -1125,7 +1145,9 @@ test("one-time Wrangler adapter migrates and verifies local persistence without 
       persistTo,
       "--config",
       wranglerConfig,
-    ], { cwd: projectRoot });
+    ];
+    const invocation = codexInvocation(wranglerExecutable, args);
+    await execFile(invocation.command, invocation.args, { cwd: projectRoot });
   }
 
   async function runMigration(command, directory, persistTo) {

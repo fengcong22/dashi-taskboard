@@ -3,10 +3,21 @@ import type { CSSProperties, DragEvent } from "react";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
 import { taskStatusLabel, useTaskboardI18n } from "../i18n";
-import type { OtherTaskTab } from "../issueBoardStatuses";
+import {
+  OTHER_TASK_TABS,
+  type OtherTaskTab,
+  type OtherTasksPanelTab,
+} from "../issueBoardStatuses";
 import { LinearIcon } from "./LinearIcon";
 import { DeleteIcon, PlusIcon, RefreshIcon, StatusIcon } from "./SemanticIcons";
 import { TaskCard } from "./TaskCard";
+// The marker remains visible during dragover even when drag payload values are protected.
+// @ts-expect-error The helper's structural contract is covered by node tests.
+import { hasUnifiedWorkflowDragType } from "../unifiedWorkflowDropGuard.mjs";
+
+function isUnifiedWorkflowDrag(event: DragEvent<HTMLElement>, sourceSurface?: string) {
+  return sourceSurface === "unified-board" || hasUnifiedWorkflowDragType(event.dataTransfer.types);
+}
 
 function archivedDate(
   value: string | null,
@@ -131,9 +142,10 @@ export function ArchivedTasksColumn({
 
 interface OtherTasksPanelProps {
   open: boolean;
-  activeTab: OtherTaskTab;
-  tabs: readonly OtherTaskTab[];
+  activeTab: OtherTasksPanelTab;
+  tabs?: readonly OtherTaskTab[];
   tasksByStatus: Record<TaskStatus, Task[]>;
+  ordinaryTasks?: Task[];
   archivedTasks: Task[];
   presentations: Record<string, TaskCardPresentation>;
   now: number;
@@ -152,7 +164,7 @@ interface OtherTasksPanelProps {
   onCreateLabel: (label: string, projectId?: string) => Promise<void>;
   restoringTaskId: string | null;
   deletingTaskId: string | null;
-  onTabChange: (tab: OtherTaskTab) => void;
+  onTabChange: (tab: OtherTasksPanelTab) => void;
   onCreate?: (status: Exclude<OtherTaskTab, "archived">) => void;
   onRestore: (task: Task) => void;
   onDelete: (task: Task) => void;
@@ -162,15 +174,16 @@ interface OtherTasksPanelProps {
   onDragStart: (task: Task, height: number) => void;
   onDragEnd: () => void;
   onDragEnter: (status: TaskStatus) => void;
-  onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
+  onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null, sourceSurface?: "board" | "other-tasks-panel" | "unified-board") => void;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
 export function OtherTasksPanel({
   open,
   activeTab,
-  tabs,
+  tabs: configuredTabs,
   tasksByStatus,
+  ordinaryTasks,
   archivedTasks,
   presentations,
   now,
@@ -203,11 +216,27 @@ export function OtherTasksPanel({
   onOpenConversation,
 }: OtherTasksPanelProps) {
   const { language, text } = useTaskboardI18n();
-  const archived = activeTab === "archived";
-  const activeLabel = archived
-    ? text("已归档", "Archived")
-    : taskStatusLabel(language, activeTab);
-  const tasks = archived ? archivedTasks : tasksByStatus[activeTab];
+  const resolvedActiveTab = activeTab === "ordinary" && ordinaryTasks === undefined
+    ? "backlog"
+    : activeTab;
+  const ordinary = resolvedActiveTab === "ordinary";
+  const archived = resolvedActiveTab === "archived";
+  const taskStatusTab = !ordinary && !archived ? resolvedActiveTab as TaskStatus : null;
+  const activeLabel = ordinary
+    ? text("普通任务", "Ordinary issues")
+    : archived
+      ? text("已归档", "Archived")
+      : taskStatusTab
+        ? taskStatusLabel(language, taskStatusTab)
+        : "";
+  const tasks = ordinary
+    ? ordinaryTasks ?? []
+    : archived
+      ? archivedTasks
+      : taskStatusTab ? tasksByStatus[taskStatusTab] : [];
+  const tabs: readonly OtherTasksPanelTab[] = ordinaryTasks === undefined
+    ? configuredTabs ?? OTHER_TASK_TABS
+    : ["ordinary", ...(configuredTabs ?? OTHER_TASK_TABS)];
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
@@ -232,11 +261,22 @@ export function OtherTasksPanel({
 
   function handleDrop(event: DragEvent<HTMLElement>) {
     event.preventDefault();
-    if (archived) return;
+    if (!taskStatusTab) {
+      setDropBeforeTaskId(undefined);
+      return;
+    }
+    const sourceSurface = event.dataTransfer.getData("application/x-taskboard-source-surface");
+    if (isUnifiedWorkflowDrag(event, sourceSurface)) {
+      setDropBeforeTaskId(undefined);
+      return;
+    }
     const taskId =
       event.dataTransfer.getData("application/x-taskboard-task") ||
       event.dataTransfer.getData("text/plain");
-    if (taskId) onDrop(activeTab, taskId, findDropBefore(event.currentTarget, event.clientY));
+    const normalizedSourceSurface = sourceSurface === "board"
+      ? sourceSurface
+      : "other-tasks-panel";
+    if (taskId) onDrop(taskStatusTab, taskId, findDropBefore(event.currentTarget, event.clientY), normalizedSourceSurface);
     setDropBeforeTaskId(undefined);
   }
 
@@ -255,6 +295,7 @@ export function OtherTasksPanel({
     <aside
       className={`other-tasks-panel${open ? " is-open" : ""}`}
       id="other-tasks-panel"
+      data-source-surface="other-tasks-panel"
       aria-label={text("其他任务", "Other issues")}
       aria-hidden={!open}
     >
@@ -262,14 +303,23 @@ export function OtherTasksPanel({
         className="other-tasks-tabs"
         role="tablist"
         aria-label={text("其他任务状态", "Other issue statuses")}
-        style={{ "--other-task-tab-count": tabs.length } as CSSProperties}
+        style={{
+          "--other-tasks-tab-count": tabs.length,
+          "--other-task-tab-count": tabs.length,
+        } as CSSProperties}
       >
         {tabs.map((tab) => {
-          const label = tab === "archived"
-            ? text("已归档", "Archived")
-            : taskStatusLabel(language, tab);
-          const count = tab === "archived" ? archivedTasks.length : tasksByStatus[tab].length;
-          const selected = tab === activeTab;
+          const label = tab === "ordinary"
+            ? text("普通任务", "Ordinary issues")
+            : tab === "archived"
+              ? text("已归档", "Archived")
+              : taskStatusLabel(language, tab);
+          const count = tab === "ordinary"
+            ? ordinaryTasks?.length ?? 0
+            : tab === "archived"
+              ? archivedTasks.length
+              : tasksByStatus[tab].length;
+          const selected = tab === resolvedActiveTab;
           return (
             <button
               className={`other-tasks-tab${selected ? " is-active" : ""}`}
@@ -291,31 +341,35 @@ export function OtherTasksPanel({
         })}
       </div>
 
-      {!archived && onCreate && (
+      {taskStatusTab && onCreate && (
         <button
           className="other-tasks-add"
           type="button"
           aria-label={text(`在${activeLabel}中新建议题`, `Create issue in ${activeLabel}`)}
           title={text(`添加到${activeLabel}`, `Add to ${activeLabel}`)}
-          onClick={() => onCreate(activeTab)}
+          onClick={() => onCreate(taskStatusTab)}
         >
           <PlusIcon color="currentColor" size={11} />
         </button>
       )}
 
       <div
-        className={`other-tasks-list${archived ? " is-archived" : ""}`}
+        className={`other-tasks-list${archived ? " is-archived" : ""}${ordinary ? " is-ordinary" : ""}`}
         id="other-tasks-list"
+        data-drag-source="other-tasks-panel"
         role="tabpanel"
-        aria-labelledby={`other-tasks-tab-${activeTab}`}
-        onDragEnter={() => {
-          if (!archived) onDragEnter(activeTab);
+        aria-labelledby={`other-tasks-tab-${resolvedActiveTab}`}
+        onDragEnter={(event) => {
+          if (taskStatusTab && !isUnifiedWorkflowDrag(event)) onDragEnter(taskStatusTab);
         }}
         onDragOver={(event) => {
-          if (archived) return;
+          if (!taskStatusTab || isUnifiedWorkflowDrag(event)) {
+            setDropBeforeTaskId(undefined);
+            return;
+          }
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
-          onDragEnter(activeTab);
+          onDragEnter(taskStatusTab);
           setDropBeforeTaskId(findDropBefore(event.currentTarget, event.clientY));
         }}
         onDragLeave={(event) => {
@@ -348,6 +402,8 @@ export function OtherTasksPanel({
               isMoving={movingTaskId === task.id}
               isSettling={settlingTaskId === task.id}
               isContextMenuOpen={contextMenuTaskId === task.id}
+              dragEnabled={!ordinary}
+              dragSourceSurface="other-tasks-panel"
               availableLabels={availableLabels}
               projectName={projectNames?.[task.projectId]}
               currentUser={currentUser}
@@ -378,6 +434,8 @@ export function OtherTasksPanel({
                 ? text("搜索和筛选会同步作用于所有状态。", "Search and filters apply to every status.")
                 : archived
                   ? text("没有已归档议题。", "There are no archived issues.")
+                  : ordinary
+                    ? text("没有普通任务。", "There are no ordinary issues.")
                   : text(`没有${activeLabel}。`, `There are no issues in ${activeLabel}.`)}
             </span>
           </div>

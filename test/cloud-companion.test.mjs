@@ -80,12 +80,6 @@ function memoryConfigStore(overrides = {}) {
   };
 }
 
-function firstLanAddress() {
-  return Object.values(os.networkInterfaces())
-    .flat()
-    .find((entry) => entry?.family === "IPv4" && !entry.internal)?.address ?? null;
-}
-
 test("cloud config persists Basic Auth credentials and device mappings in a mode-0600 file", async () => {
   const { createCloudConfigStore } = await importCloudConfig();
   const configPath = await temporaryConfigPath("companion.json");
@@ -674,12 +668,7 @@ test("configured server proxies business APIs without touching local rows and ad
   }
 });
 
-test("cloud mode exposes machine capabilities only to loopback while local mode keeps LAN access", async (t) => {
-  const lanAddress = firstLanAddress();
-  if (!lanAddress) {
-    t.skip("No non-loopback IPv4 interface is available");
-    return;
-  }
+test("cloud mode cannot opt into a non-loopback bind", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "taskboard-cloud-lan-"));
   temporaryDirectories.push(directory);
   const configPath = path.join(directory, "companion.json");
@@ -699,39 +688,13 @@ test("cloud mode exposes machine capabilities only to loopback while local mode 
       return jsonResponse({ projects: [] });
     },
   });
-  const address = await app.listen({ host: "0.0.0.0", port: 0 });
-  const lanBaseUrl = `http://${lanAddress}:${address.port}`;
-
-  try {
-    for (const pathname of [
-      "/api/meta",
-      "/api/device-workspaces",
-      "/api/projects/portfolio/development-contexts",
-    ]) {
-      const response = await fetch(`${lanBaseUrl}${pathname}`);
-      assert.equal(response.status, 403, pathname);
-      assert.equal((await response.json()).error.code, "LOCAL_ONLY", pathname);
-    }
-    const projectResponse = await fetch(`${lanBaseUrl}/api/projects`);
-    assert.equal(projectResponse.status, 403);
-    assert.equal((await projectResponse.json()).error.code, "LOCAL_ONLY");
-    const taskResponse = await fetch(`${lanBaseUrl}/api/tasks`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ projectId: "portfolio", title: "Must not proxy" }),
-    });
-    assert.equal(taskResponse.status, 403);
-    assert.equal((await taskResponse.json()).error.code, "LOCAL_ONLY");
-    assert.equal(upstreamCalls, 0);
-
-    await store.clearCloud();
-    const localResponse = await fetch(`${lanBaseUrl}/api/device-workspaces`);
-    assert.equal(localResponse.status, 200);
-    const localProjects = await fetch(`${lanBaseUrl}/api/projects`);
-    assert.equal(localProjects.status, 200);
-  } finally {
-    await app.close();
-  }
+  await assert.rejects(
+    app.listen({ host: "0.0.0.0", port: 0 }),
+    /CODEX_TASKBOARD_HOST must be 127\.0\.0\.1/,
+  );
+  assert.equal(app.server.listening, false);
+  assert.equal(upstreamCalls, 0);
+  await app.close();
 });
 
 test("taskctl cloud login reads the shared key privately and sends it to the local companion", async () => {

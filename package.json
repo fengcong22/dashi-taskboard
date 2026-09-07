@@ -33,7 +33,7 @@
     "start": "node server/index.mjs",
     "taskctl": "node cli/taskctl.mjs",
     "test": "node --test && npm run test:components",
-    "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx --environment jsdom",
+    "test:components": "vitest run web/src/components/MarkdownDocument.test.tsx web/src/components/FeishuWorkflowPanel.test.tsx web/src/components/AutoCutRunSummary.test.tsx --environment jsdom",
     "test:cloud": "node --test test/cloud-shared-worker.test.mjs",
     "cloud:migrate:local": "wrangler d1 migrations apply codex-taskboard-db --local",
     "cloud:migrate": "wrangler d1 migrations apply codex-taskboard-db --remote",
@@ -43,6 +43,8 @@
     "check": "npm run typecheck && npm run build && npm test"
   },
   "dependencies": {
+    "@lobehub/icons-static-svg": "^1.94.0",
+    "@xyflow/react": "^12.11.2",
     "dhtmlx-gantt": "^10.0.0",
     "dompurify": "^3.4.13",
     "js-yaml": "4.3.1",

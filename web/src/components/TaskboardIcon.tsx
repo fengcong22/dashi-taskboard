@@ -3,6 +3,7 @@ import aiLauncher from "../assets/figma-taskboard/ai-launcher.svg";
 import automationPause from "../assets/figma-taskboard/automation-pause.svg";
 import automationPlay from "../assets/figma-taskboard/automation-play.svg";
 import breadcrumb from "../assets/figma-taskboard/breadcrumb.svg";
+import conversation from "../assets/figma-taskboard/conversation.svg";
 import dropdown from "../assets/figma-taskboard/dropdown.svg";
 import filter from "../assets/figma-taskboard/filter.svg";
 import home from "../assets/figma-taskboard/home.svg";
@@ -15,6 +16,7 @@ const TASKBOARD_ICONS = {
   automationPause,
   automationPlay,
   breadcrumb,
+  conversation,
   dropdown,
   filter,
   home,
@@ -29,6 +31,7 @@ const MONOCHROME_ICONS = new Set<TaskboardIconName>([
   "aiLauncher",
   "automationPlay",
   "breadcrumb",
+  "conversation",
   "dropdown",
   "filter",
   "home",

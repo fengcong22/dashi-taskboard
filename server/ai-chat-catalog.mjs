@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { parse as parseToml } from "smol-toml";
 
 import { withoutTaskboardLauncherEnvironment } from "../shared/codex-environment.mjs";
-import { executableCommand } from "../shared/executable-command.mjs";
+import { codexInvocation } from "../shared/codex-invocation.mjs";
 import { composerReferencePersistence } from "./composer-reference.mjs";
 import { ApiError } from "./database.mjs";
 
@@ -382,8 +382,8 @@ function sanitizeAppServerModels(value) {
 
 function listSkills(codexExecutable, workspacePath, processEnv) {
   return new Promise((resolve, reject) => {
-    const command = executableCommand(codexExecutable, ["app-server", "--stdio"]);
-    const child = spawn(command.executable, command.args, {
+    const invocation = codexInvocation(codexExecutable, ["app-server", "--stdio"]);
+    const child = spawn(invocation.command, invocation.args, {
       cwd: workspacePath,
       env: processEnv,
       stdio: ["pipe", "pipe", "ignore"],
@@ -994,9 +994,9 @@ export async function discoverAiCatalog({
   processEnv,
 }) {
   const environment = withoutTaskboardLauncherEnvironment(processEnv);
-  const modelCommand = executableCommand(codexExecutable, ["debug", "models"]);
+  const debugInvocation = codexInvocation(codexExecutable, ["debug", "models"]);
   const [modelResult, skillEntries, commands] = await Promise.all([
-    execFileAsync(modelCommand.executable, modelCommand.args, {
+    execFileAsync(debugInvocation.command, debugInvocation.args, {
       cwd: workspacePath,
       env: environment,
       encoding: "utf8",

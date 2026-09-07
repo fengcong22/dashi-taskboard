@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DragEvent } from "react";
 import type { ActorIdentity, Task, TaskDraft, TaskStatus } from "../types";
-import { taskStatusLabel, useTaskboardI18n } from "../i18n";
+import { useTaskboardI18n } from "../i18n";
 import type { TaskCardPresentation, TaskConversationItem } from "../taskConversations";
 import { TaskCard } from "./TaskCard";
 import { PlusIcon, StatusIcon } from "./SemanticIcons";
@@ -12,6 +12,7 @@ export const STATUS_DETAILS: Record<
 > = {
   backlog: { label: "待立项", tone: "backlog" },
   todo: { label: "等待认领", tone: "todo" },
+  queued: { label: "排队中", tone: "queued" },
   in_progress: { label: "处理中", tone: "progress" },
   in_review: { label: "等你确认", tone: "review" },
   blocked: { label: "遇到阻碍", tone: "blocked" },
@@ -47,7 +48,7 @@ interface BoardColumnProps {
   onDragStart: (task: Task, height: number) => void;
   onDragEnd: () => void;
   onDragEnter: (status: TaskStatus) => void;
-  onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null) => void;
+  onDrop: (status: TaskStatus, taskId: string, beforeTaskId: string | null, sourceSurface?: "board" | "other-tasks-panel" | "unified-board") => void;
   onOpenConversation: (conversation: TaskConversationItem) => void;
 }
 
@@ -82,9 +83,9 @@ export function BoardColumn({
   onDrop,
   onOpenConversation,
 }: BoardColumnProps) {
-  const { language, text } = useTaskboardI18n();
+  const { text, statusLabel } = useTaskboardI18n();
   const details = STATUS_DETAILS[status];
-  const label = taskStatusLabel(language, status);
+  const label = statusLabel(status);
   const [dropBeforeTaskId, setDropBeforeTaskId] = useState<string | null | undefined>();
   const taskIndexes = new Map(tasks.map((task, index) => [task.id, index]));
   const remainingTasks = tasks.filter((task) => task.id !== draggedTaskId);
@@ -112,7 +113,11 @@ export function BoardColumn({
     const taskId =
       event.dataTransfer.getData("application/x-taskboard-task") ||
       event.dataTransfer.getData("text/plain");
-    if (taskId) onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY));
+    const sourceSurface = event.dataTransfer.getData("application/x-taskboard-source-surface");
+    const normalizedSourceSurface = sourceSurface === "other-tasks-panel" || sourceSurface === "unified-board"
+      ? sourceSurface
+      : "board";
+    if (taskId) onDrop(status, taskId, findDropBefore(event.currentTarget, event.clientY), normalizedSourceSurface);
     setDropBeforeTaskId(undefined);
   }
 
@@ -154,7 +159,7 @@ export function BoardColumn({
             {label}{tasks.length > 0 ? ` ${tasks.length}` : ""}
           </h2>
         </div>
-        {createEnabled && (
+        {createEnabled && status !== "queued" && (
           <div className="column-actions">
             <button
               type="button"
@@ -183,6 +188,7 @@ export function BoardColumn({
               isMoving={movingTaskId === task.id}
               isSettling={settlingTaskId === task.id}
               isContextMenuOpen={contextMenuTaskId === task.id}
+              dragSourceSurface="board"
               availableLabels={availableLabels}
               projectName={projectNames?.[task.projectId]}
               currentUser={currentUser}

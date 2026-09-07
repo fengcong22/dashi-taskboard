@@ -172,7 +172,7 @@ export function TaskEditor({
   onCancel,
   onSave,
 }: TaskEditorProps) {
-  const { language, locale, text } = useTaskboardI18n();
+  const { language, locale, text, statusLabel } = useTaskboardI18n();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const backdropPointerRef = useRef({ down: false, up: false });
@@ -578,7 +578,7 @@ export function TaskEditor({
             )}
             <TaskPropertyPicker
               value={status}
-              options={TASK_STATUSES.map((value) => ({
+              options={TASK_STATUSES.filter((value) => value !== "queued").map((value) => ({
                 value,
                 label: taskStatusLabel(language, value),
                 icon: <StatusIcon status={value} color="currentColor" size={14} />,

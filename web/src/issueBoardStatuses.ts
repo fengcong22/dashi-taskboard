@@ -2,6 +2,7 @@ import type { TaskStatus } from "./types";
 
 export const MAIN_STATUSES = [
   "todo",
+  "queued",
   "in_progress",
   "blocked",
   "in_review",
@@ -13,6 +14,12 @@ export const SECONDARY_STATUSES = [
   "canceled",
 ] as const satisfies readonly TaskStatus[];
 
+export const OTHER_TASK_TABS = [
+  ...SECONDARY_STATUSES,
+  "archived",
+] as const;
+
 export type MainTaskStatus = (typeof MAIN_STATUSES)[number];
 export type SecondaryTaskStatus = (typeof SECONDARY_STATUSES)[number];
 export type OtherTaskTab = TaskStatus | "archived";
+export type OtherTasksPanelTab = OtherTaskTab | "ordinary";

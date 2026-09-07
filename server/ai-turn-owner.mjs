@@ -1,14 +1,13 @@
 import { spawn } from "node:child_process";
 import { Socket } from "node:net";
-
-import { executableCommand } from "../shared/executable-command.mjs";
+import { codexInvocation } from "../shared/codex-invocation.mjs";
 import { signalProcessTree } from "../shared/process-tree.mjs";
 
 const [executable, encodedArgs] = process.argv.slice(2);
 if (!executable || !encodedArgs) process.exit(2);
 
-const command = executableCommand(executable, JSON.parse(encodedArgs));
-const child = spawn(command.executable, command.args, {
+const invocation = codexInvocation(executable, JSON.parse(encodedArgs));
+const child = spawn(invocation.command, invocation.args, {
   env: process.env,
   stdio: "inherit",
   windowsHide: true,

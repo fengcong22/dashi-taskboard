@@ -1,6 +1,7 @@
 export const TASK_STATUSES = [
   "backlog",
   "todo",
+  "queued",
   "in_progress",
   "in_review",
   "blocked",
@@ -11,6 +12,16 @@ export const TASK_PRIORITIES = ["none", "urgent", "high", "medium", "low"] as co
 
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
+
+export type BoardStageLabelsByLanguage = Record<TaskStatus, string>;
+
+export interface BoardStageLabels {
+  version: number;
+  labels: {
+    zh: BoardStageLabelsByLanguage;
+    en: BoardStageLabelsByLanguage;
+  };
+}
 export type ActorType = "user" | "agent";
 export type AssigneeTarget = "current-user" | "codex-agent";
 export type IssueRelationType = "parent" | "blocks" | "blocked_by" | "related";
@@ -325,6 +336,35 @@ export interface AiChatThreadSnapshot {
   runs: AiChatRun[];
 }
 
+export interface WorkflowCapabilityOption {
+  id: string;
+  label: string;
+  scope: "user" | "repo" | "system" | "admin";
+}
+
+export interface WorkflowMcpServerOption {
+  id: string;
+  label: string;
+  transport: string;
+}
+
+export interface WorkflowCapabilities {
+  skills: WorkflowCapabilityOption[];
+  mcpServers: WorkflowMcpServerOption[];
+}
+
+export interface WorkflowOption {
+  id: string;
+  name: string;
+}
+
+export interface WorkflowWorkspaceRecord<T = unknown> {
+  projectId: string;
+  workspace: T | null;
+  version: number;
+  updatedAt: string | null;
+}
+
 export interface CodexProjectIdentity {
   codexProjectId: string;
   codexProjectKind: "local" | "remote";
@@ -340,11 +380,238 @@ export interface Project {
   id: string;
   name: string;
   workspacePath: string | null;
-  source: "local" | "jira";
+  source: "global" | "local" | "feishu" | "jira";
   labels: string[];
   issueCount: number;
+  archivedIssueCount: number;
+  archivedAt: string | null;
+  subjectKey?: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export type FeishuPackageState = "draft" | "enabled" | "disabled";
+
+export interface AutoCutPackageDraft {
+  alias: string;
+  name: string;
+  projectId: string;
+  workspacePath: string | null;
+  model: string | null;
+  reasoningEffort: string | null;
+  prompt: string | null;
+  zipSourceDirectory: string | null;
+  maxConcurrent: number;
+}
+
+export interface FeishuPackage extends AutoCutPackageDraft {
+  projectName?: string;
+  state: FeishuPackageState;
+  revision: number;
+  updatedAt: string;
+}
+
+export type AutoCutPackageReference =
+  | {
+    type: "subject";
+    subjectKey: string;
+    baseToken: string;
+    baseName: string;
+    tableId: string;
+    tableName: string;
+    lifecycle: "enabled";
+  }
+  | {
+    type: "task";
+    taskId: string;
+    identifier: string;
+    title: string;
+    status: TaskStatus;
+    subjectKey?: string;
+  };
+
+export interface FeishuPackageSummary extends FeishuPackage {
+  referenceCount: number;
+  references: AutoCutPackageReference[];
+}
+
+export interface FeishuFieldOption {
+  id: string;
+  name: string;
+  color?: number;
+}
+
+export interface FeishuFieldMetadata {
+  fieldId: string;
+  fieldName: string;
+  type: number | string | null;
+  uiType: string | null;
+  options: FeishuFieldOption[];
+}
+
+export type FeishuStageId = "initial" | "first_review" | "final_review";
+export type FeishuStageSourceKind = "docx_section" | "base_attachment";
+export type FeishuStageAudioMode = "video_original" | "replace_original";
+
+export interface FeishuStageSource {
+  kind: FeishuStageSourceKind;
+  anchorText?: string;
+  fieldId?: string;
+}
+
+export interface FeishuStageConfig {
+  enabled: boolean;
+  trigger: {
+    fieldId: string | null;
+    fieldName?: string | null;
+    optionId: string | null;
+    value: string;
+  };
+  videoSource: FeishuStageSource;
+  reviewSource: FeishuStageSource;
+  audio: {
+    mode: FeishuStageAudioMode;
+    source?: FeishuStageSource | null;
+    durationToleranceSeconds?: number;
+  };
+  artifactTargetPath?: string | null;
+  nameSuffix: string;
+}
+
+export type FeishuStageConfigMap = Record<FeishuStageId, FeishuStageConfig>;
+
+export interface FeishuAutoCutRun {
+  runId: string;
+  taskId: string;
+  attempt: number;
+  subjectKey: string;
+  configVersion: number;
+  stageId: FeishuStageId;
+  eventId: string;
+  manifestSha256: string | null;
+  state: "preparing" | "prepared" | "running" | "blocked" | "reported" | "completed";
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeishuSubjectConfig {
+  subjectKey: string;
+  baseToken: string;
+  baseName: string;
+  tableId: string;
+  tableName: string;
+  projectId: string;
+  displayEnabled: boolean;
+  lifecycle: "draft" | "enabled" | "disabled";
+  configVersion: number;
+  statusField?: { fieldId: string; fieldName: string; type?: string; options?: FeishuFieldOption[] };
+  documentField?: { fieldId: string; fieldName: string; kind?: string };
+  namingField?: { fieldId: string; fieldName: string; kind?: string };
+  stages?: FeishuStageConfigMap;
+  trigger?: { fieldId: string; fieldName: string; startValue: string; optionId: string | null };
+  title?: { fieldId: string | null; fieldName: string | null };
+  execution?: { mode: "manual" | "automatic"; concurrencyGroup: string; maxConcurrent: number; resourceGroups: string[] };
+  packageRoute?: { routeMode: "fixed"; packageAlias: string; subjectCodeFieldId: string | null; branchMap: Record<string, string> | null };
+  upload?: { enqueueMode: "manual" | "automatic"; artifactSourceMode: string; artifactSourcePath: string | null; targetId: string | null; targetPath: string | null; uploadConcurrency: number };
+  metadata?: { fields?: FeishuFieldMetadata[] };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeishuBaseCatalog {
+  baseToken: string;
+  baseName: string;
+  sourceUrlLabel: string | null;
+  metadataRefreshedAt: number | null;
+  subjects: FeishuSubjectConfig[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeishuWorkflowShareConfiguration {
+  schemaVersion: number;
+  configVersion?: number;
+  createdAt?: string | number | null;
+  updatedAt?: string | number | null;
+  bases: FeishuBaseCatalog[];
+}
+
+export interface FeishuWorkflowShareDiagnostic {
+  code: string;
+  severity: "info" | "warning" | "error";
+  path?: string;
+  alias?: string;
+  message: string;
+}
+
+export interface FeishuWorkflowShareResult {
+  configuration: FeishuWorkflowShareConfiguration;
+  catalog?: FeishuBaseCatalog[];
+  diagnostics: FeishuWorkflowShareDiagnostic[];
+  diagnosticsOk?: boolean;
+  dryRun: boolean;
+}
+
+export type UnifiedWorkflowStage =
+  | "todo"
+  | "queued"
+  | "in_progress"
+  | "blocked"
+  | "in_review"
+  | "completed_editing"
+  | "upload_queue"
+  | "uploading"
+  | "uploaded";
+
+export interface StageDisplayOverride {
+  subjectKey: string;
+  stageId: UnifiedWorkflowStage;
+  zhName: string | null;
+  enName: string | null;
+  zhDescription: string | null;
+  enDescription: string | null;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface UnifiedWorkflowView {
+  id: string;
+  subjectKey: string;
+  name: string;
+  stageIds: UnifiedWorkflowStage[];
+  isSystem: boolean;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface UnifiedWorkflowViewsState {
+  schemaVersion: 1;
+  subjectKey: string;
+  revision: number;
+  defaultViewId: string;
+  activeViewId: string;
+  views: UnifiedWorkflowView[];
+  readOnly: boolean;
+}
+
+export interface CreateUnifiedWorkflowViewInput {
+  subjectKey: string;
+  name: string;
+  stageIds: UnifiedWorkflowStage[];
+  stateRevision: number;
+}
+
+export interface UpdateUnifiedWorkflowViewInput {
+  subjectKey: string;
+  stateRevision: number;
+  viewRevision?: number;
+  name?: string;
+  stageIds?: UnifiedWorkflowStage[];
+  defaultViewId?: string;
+  activeViewId?: string;
 }
 
 export interface ProjectSummary {
@@ -428,6 +695,7 @@ export interface Task {
   creatorName: string;
   creatorAvatarUrl: string | null;
   assignee: ActorIdentity;
+  workflowId: string | null;
   developmentContext: DevelopmentContext | null;
   startDate: string | null;
   dueDate: string | null;
@@ -441,6 +709,8 @@ export interface Task {
   version: number;
   createdAt: string;
   updatedAt: string;
+  feishuOrigin?: FeishuTaskOrigin;
+  feishuPackageSnapshot?: FeishuTaskPackageSnapshot;
 }
 
 export interface JiraConnection {
@@ -497,6 +767,84 @@ export interface Attachment {
   contentType: string;
   size: number;
   createdAt: string;
+}
+
+export interface TaskArtifact {
+  id: string;
+  taskId: string;
+  runId: string | null;
+  filename: string;
+  contentType: string;
+  size: number;
+  sha256: string;
+  sourceMode: string;
+  validationStatus: string;
+  entryCount: number;
+  draftRoot: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskArtifactSummary {
+  id: string;
+  taskId: string;
+  filename: string;
+  validationStatus: "verified";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FeishuTaskOrigin {
+  taskId?: string;
+  version: number;
+  source: "feishu-base";
+  eventId: string;
+  baseToken: string;
+  tableId: string;
+  recordId: string;
+  triggerField?: string;
+  triggerFieldId?: string;
+  triggerValue?: string;
+  subjectKey?: string;
+  configVersion?: number;
+  stageId?: FeishuStageId;
+  stageLabel?: string;
+  eventOccurredAt?: number | null;
+  mode?: "manual" | "automatic";
+  executionMode?: "manual" | "automatic";
+  uploadMode?: "manual" | "automatic";
+  packageAlias?: string;
+  packageSource?: string;
+  concurrencyGroup?: string;
+  maxConcurrent?: number;
+  resourceGroups?: string[];
+}
+
+export interface FeishuTaskPackageSnapshot {
+  zipSourceDirectory: string | null;
+}
+
+export interface ArtifactUpload {
+  id: string;
+  taskId: string;
+  artifactId: string;
+  subjectKey: string;
+  targetId: string | null;
+  filename: string;
+  sha256: string;
+  status: "queued" | "uploading" | "uploaded" | "failed";
+  attemptCount: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+}
+
+export interface ArtifactUploadListItem {
+  upload: ArtifactUpload;
+  task: Task;
 }
 
 export interface HostContext {

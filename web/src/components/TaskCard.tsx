@@ -24,8 +24,12 @@ import { DueDateIcon, PriorityIcon, ProjectIcon } from "./SemanticIcons";
 import { LabelPicker } from "./LabelPicker";
 import { TaskPropertyPicker } from "./TaskPropertyPicker";
 import { TaskConversationMenu } from "./TaskConversationMenu";
+import { TaskboardIcon } from "./TaskboardIcon";
 import completeIcon from "../assets/figma-taskboard/card-complete.svg";
 import processingAnimation from "../assets/figma-taskboard/loading-16.svg";
+// The marker is shared with the unified board's protected-drag check.
+// @ts-expect-error The ESM helper is exercised through focused node tests.
+import { UNIFIED_WORKFLOW_DRAG_MIME_TYPE } from "../unifiedWorkflowDropGuard.mjs";
 
 interface TaskCardProps {
   task: Task;
@@ -37,6 +41,8 @@ interface TaskCardProps {
   isMoving: boolean;
   isSettling: boolean;
   isContextMenuOpen: boolean;
+  dragEnabled?: boolean;
+  dragSourceSurface?: "board" | "other-tasks-panel" | "unified-board";
   availableLabels: string[];
   projectName?: string;
   currentUser: ActorIdentity;
@@ -207,15 +213,39 @@ function ProcessingStatusRow({
   const { text } = useTaskboardI18n();
   const elapsed = elapsedTime(presentation.processing.startedAt, now);
   const running = presentation.processing.running;
+  const localConversation = presentation.conversations.find((conversation) => (
+    conversation.kind === "local-ai"
+  ));
+  const statusLabel = running
+    ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
+    : localConversation
+      ? text("已暂停 · 等待查看对话", "Paused · open the conversation")
+      : text("等待 Codex 连接...", "Waiting for Codex...");
   return (
-    <div className={`task-processing-row${running ? " is-running" : " is-paused"}`}>
+    <div
+      className={`task-processing-row${running ? " is-running" : " is-paused"}`}
+      aria-label={statusLabel}
+      title={statusLabel}
+    >
       {running && <img className="task-processing-glyph" src={processingAnimation} alt="" aria-hidden="true" />}
       <span className="task-processing-label">
-        {running
-          ? (elapsed ? text(`已处理 ${elapsed}...`, `Processing for ${elapsed}...`) : text("正在处理...", "Processing..."))
-          : text("暂停处理", "Processing paused")}
+        {statusLabel}
       </span>
       <span className="task-processing-spacer" aria-hidden="true" />
+      {!running && localConversation && (
+        <button
+          className="task-processing-open"
+          type="button"
+          aria-label={text("打开执行对话", "Open execution conversation")}
+          title={text("打开执行对话", "Open execution conversation")}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenConversation(localConversation);
+          }}
+        >
+          <TaskboardIcon name="conversation" />
+        </button>
+      )}
       {presentation.conversations.length > 0 && (
         <TaskConversationMenu
           conversations={presentation.conversations}
@@ -398,6 +428,8 @@ export function TaskCard({
   isMoving,
   isSettling,
   isContextMenuOpen,
+  dragEnabled = true,
+  dragSourceSurface = "board",
   availableLabels,
   projectName,
   currentUser,
@@ -455,7 +487,8 @@ export function TaskCard({
         viewTransitionName: task.status === "in_review" ? `review-task-${task.id}` : "none",
         ...(dragShift ? { transform: `translate3d(0, ${dragShift}px, 0)` } : {}),
       }}
-      draggable={!isMoving}
+      draggable={dragEnabled && !isMoving}
+      data-drag-source={dragEnabled ? dragSourceSurface : undefined}
       aria-labelledby={`task-${task.id}-title`}
       data-task-id={task.id}
       data-drag-shift={dragShift || undefined}
@@ -464,13 +497,17 @@ export function TaskCard({
         event.stopPropagation();
         onContextMenu(task, { x: event.clientX, y: event.clientY });
       }}
-      onDragStart={(event) => {
+      onDragStart={dragEnabled ? (event) => {
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", task.id);
         event.dataTransfer.setData("application/x-taskboard-task", task.id);
+        event.dataTransfer.setData("application/x-taskboard-source-surface", dragSourceSurface);
+        if (dragSourceSurface === "unified-board") {
+          event.dataTransfer.setData(UNIFIED_WORKFLOW_DRAG_MIME_TYPE, "1");
+        }
         onDragStart(task, event.currentTarget.offsetHeight);
-      }}
-      onDragEnd={onDragEnd}
+      } : undefined}
+      onDragEnd={dragEnabled ? onDragEnd : undefined}
     >
       <button
         className="task-card-open"

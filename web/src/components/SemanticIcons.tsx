@@ -91,6 +91,7 @@ function MaskIcon({ color = "currentColor", size = 16, source, style, ...props }
 const STATUS_SOURCES: Record<TaskStatus, string> = {
   backlog: statusBacklogSource,
   todo: statusTodoSource,
+  queued: statusProgressSource,
   in_progress: statusProgressSource,
   in_review: statusReviewSource,
   blocked: statusBlockedSource,
@@ -101,6 +102,7 @@ const STATUS_SOURCES: Record<TaskStatus, string> = {
 const STATUS_COLORS: Record<TaskStatus, string> = {
   backlog: "var(--status-backlog)",
   todo: "var(--status-todo)",
+  queued: "var(--status-progress)",
   in_progress: "var(--status-progress)",
   in_review: "var(--status-review)",
   blocked: "var(--status-blocked)",
